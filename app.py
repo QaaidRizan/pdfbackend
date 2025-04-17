@@ -1,0 +1,197 @@
+from flask import Flask, request, jsonify, Blueprint
+import PyPDF2
+import os
+import re
+import sys
+import requests
+from werkzeug.utils import secure_filename
+from uuid import uuid4
+from dotenv import load_dotenv
+from flask_cors import CORS
+
+load_dotenv()
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Configuration
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'pdf'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# OpenAI/DeepSeek configuration
+OPENROUTER_API_KEY = os.getenv('VITE_OPENROUTER_API_KEY')
+SITE_URL = os.getenv('VITE_SITE_URL')
+SITE_NAME = os.getenv('VITE_SITE_NAME')
+
+if not OPENROUTER_API_KEY:
+    raise ValueError("VITE_OPENROUTER_API_KEY is not set")
+
+# Temporary storage
+uploaded_files = {}
+
+
+# Helper functions
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def clean_text(text):
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = text.replace('\n\n', '\n')
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'- (?=[a-z])', '', text)
+    text = text.replace('\u2022', '• ')
+    text = text.replace('\u00a0', ' ')
+    return text.strip()
+
+
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    try:
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                text += page.extract_text() + "\n"
+        return clean_text(text)
+    except Exception as e:
+        return f"Error extracting text: {str(e)}"
+
+
+# API endpoints
+@app.route('/api/upload-pdf', methods=['POST'])
+def upload_pdf():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part in the request'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
+        extracted_text = extract_text_from_pdf(filepath)
+        file_id = str(uuid4())
+        uploaded_files[file_id] = {
+            'filename': filename,
+            'text': extracted_text
+        }
+
+        return jsonify({
+            'file_id': file_id,
+            'filename': filename,
+            'text_length': len(extracted_text),
+            'text_preview': extracted_text[:500] + '...' if len(extracted_text) > 500 else extracted_text
+        })
+
+    return jsonify({'error': 'File type not allowed'}), 400
+
+
+@app.route('/api/query-file', methods=['POST'])
+def query_pdf():
+    data = request.json
+    if not data or 'file_id' not in data or 'prompt' not in data:
+        return jsonify({'error': 'file_id and prompt are required'}), 400
+
+    file_id = data['file_id']
+    prompt = data['prompt']
+    extracted_text = uploaded_files.get(file_id, {}).get('text', None)
+
+    if not extracted_text:
+        return jsonify({'error': 'Invalid file_id or no PDF content found'}), 400
+
+    # AI processing
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": SITE_URL,
+        "X-Title": SITE_NAME,
+        "Content-Type": "application/json"
+    }
+
+    prompt_text = f"I'm analyzing a document with the following content:\n\n{extracted_text[:4000]}...\n\nBased on this document, please answer: {prompt}"
+
+    payload = {
+        "model": "deepseek/deepseek-r1:free",
+        "messages": [
+            {"role": "system",
+             "content": "You are a helpful assistant that accurately answers questions about document content. Format your responses in a clear, structured way using numbered points (1., 2., 3., etc.). Do not use special symbols like '#' or '*' for formatting. Keep your explanations concise and well-organized."},
+            {"role": "user", "content": prompt_text}
+        ]
+    }
+
+    try:
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
+        result = response.json()
+        ai_response = result["choices"][0]["message"]["content"]
+    except Exception as e:
+        ai_response = f"Error getting AI response: {str(e)}"
+
+    return jsonify({
+        'file_id': file_id,
+        'prompt': prompt,
+        'response': ai_response
+    })
+
+
+@app.route('/api/test', methods=['GET'])
+def test_endpoint():
+    return jsonify({'status': 'API is working!'})
+
+
+# CLI functionality
+def run_cli_mode():
+    if len(sys.argv) > 1 and sys.argv[1] == '--cli':
+        if len(sys.argv) < 4:
+            print("Usage: python app.py --cli <pdf_path> <query>")
+            sys.exit(1)
+
+        pdf_path = sys.argv[2]
+        query = ' '.join(sys.argv[3:])
+
+        print(f"Processing PDF: {pdf_path}")
+        extracted_text = extract_text_from_pdf(pdf_path)
+        if extracted_text.startswith("Error"):
+            print(extracted_text)
+            sys.exit(1)
+
+        print("\nGetting AI response...")
+        # Direct AI call
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "HTTP-Referer": SITE_URL,
+            "X-Title": SITE_NAME,
+            "Content-Type": "application/json"
+        }
+        prompt_text = f"I'm analyzing a document with the following content:\n\n{extracted_text[:4000]}...\n\nBased on this document, please answer: {query}"
+        payload = {
+            "model": "deepseek/deepseek-r1:free",
+            "messages": [
+                {"role": "system",
+                 "content": "You are explaining document content like a thoughtful human would - not just repeating what's in the text, but helping the user understand WHY things are the way they are. Focus on explaining underlying reasons, contexts, and implications. When you explain concepts from the document, don't just state facts - share why they matter, how they connect to other ideas, and what makes them important. Use conversational language as if you're talking to a friend. Include phrases like 'This happens because...' or 'The reason for this is...' or 'This is important since...' to highlight causality and reasoning. Avoid sounding like you're reading from a transcript - instead, sound like you're having a genuine conversation where you're helping someone grasp both the what AND the why of the document. Keep responses fairly brief and natural, and end by checking if they want to know more about a specific aspect."},
+                {"role": "user", "content": prompt_text}
+            ]
+        }
+
+        try:
+            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            ai_response = result["choices"][0]["message"]["content"]
+        except Exception as e:
+            ai_response = f"Error getting AI response: {str(e)}"
+
+        print("\nAI Response:")
+        print(ai_response)
+        sys.exit(0)
+
+
+if __name__ == '__main__':
+    run_cli_mode()
+    app.run(debug=True, port=5000)
