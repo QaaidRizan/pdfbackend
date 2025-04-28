@@ -197,6 +197,7 @@ def run_cli_mode():
         sys.exit(0)
 
 
-if __name__ == '__main__':
-    run_cli_mode()
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))  # get PORT from Railway
+    app.run(debug=True, host="0.0.0.0", port=port)
+
