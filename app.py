@@ -73,10 +73,14 @@ def upload_pdf():
 
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
 
-        extracted_text = extract_text_from_pdf(filepath)
+        # Instead of saving the file, read it into memory
+        pdf_reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+
+        extracted_text = clean_text(text)
         file_id = str(uuid4())
         uploaded_files[file_id] = {
             'filename': filename,
@@ -91,6 +95,7 @@ def upload_pdf():
         })
 
     return jsonify({'error': 'File type not allowed'}), 400
+
 
 
 @app.route('/api/query-file', methods=['POST'])
@@ -194,4 +199,4 @@ def run_cli_mode():
 
 if __name__ == '__main__':
     run_cli_mode()
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
