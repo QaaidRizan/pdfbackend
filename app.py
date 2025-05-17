@@ -122,10 +122,11 @@ def query_pdf():
     prompt_text = f"I'm analyzing a document with the following content:\n\n{extracted_text[:4000]}...\n\nBased on this document, please answer: {prompt}"
 
     payload = {
-        "model": "deepseek/deepseek-r1:free",
+        "model": "deepseek/deepseek-v3-base:free",
         "messages": [
             {"role": "system",
-             "content": "You are a helpful assistant that accurately answers questions about document content. Format your responses in a clear, structured way using numbered points (1., 2., 3., etc.). Do not use special symbols like '#' or '*' for formatting. Keep your explanations concise and well-organized."},
+             "content": "You are a helpful medical assistant specialized in analyzing brain tumor medical reports. When a user provides a report, read the content carefully and explain the findings clearly and concisely. Present your explanation using numbered points. Focus on helping the user understand the medical terminology, diagnoses, and implications in simple language."
+    },
             {"role": "user", "content": prompt_text}
         ]
     }
@@ -176,10 +177,10 @@ def run_cli_mode():
         }
         prompt_text = f"I'm analyzing a document with the following content:\n\n{extracted_text[:4000]}...\n\nBased on this document, please answer: {query}"
         payload = {
-            "model": "deepseek/deepseek-r1:free",
+            "model": "deepseek/deepseek-v3-base:free",
             "messages": [
                 {"role": "system",
-                 "content": "You are explaining document content like a thoughtful human would - not just repeating what's in the text, but helping the user understand WHY things are the way they are. Focus on explaining underlying reasons, contexts, and implications. When you explain concepts from the document, don't just state facts - share why they matter, how they connect to other ideas, and what makes them important. Use conversational language as if you're talking to a friend. Include phrases like 'This happens because...' or 'The reason for this is...' or 'This is important since...' to highlight causality and reasoning. Avoid sounding like you're reading from a transcript - instead, sound like you're having a genuine conversation where you're helping someone grasp both the what AND the why of the document. Keep responses fairly brief and natural, and end by checking if they want to know more about a specific aspect."},
+                 "content": "You are an assistant that helps users understand their medical reports. When a user uploads a PDF of a medical report, extract the text and explain the contents of the report in simple, clear language."},
                 {"role": "user", "content": prompt_text}
             ]
         }
